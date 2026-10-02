@@ -28,9 +28,13 @@ env/
 .coverage
 htmlcov/
 
+# Logs
+logs/
+*.log
+
+# Conversations
+conversations/
+
 # OS
 .DS_Store
 Thumbs.db
-
-# Logs
-*.log

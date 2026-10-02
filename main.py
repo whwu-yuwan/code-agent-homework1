@@ -1,12 +1,21 @@
 """
 CLI 交互界面
-提供命令行交互入口，支持多轮对话和斜杠命令
+提供命令行交互入口，支持多轮对话、斜杠命令、Verbose 模式
 """
 
 import sys
+import logging
+from datetime import datetime
+from pathlib import Path
 
 import config
-from agent import CodeAgent, AgentError
+from agent import CodeAgent
+from exceptions import AgentError
+from callbacks import verbose_manager
+from logger import setup_logging
+
+# 创建日志记录器
+logger = logging.getLogger(__name__)
 
 
 BANNER = """
@@ -16,9 +25,12 @@ BANNER = """
 ║  功能：读取代码文件、解释代码逻辑、生成注释、回答代码问题        ║
 ║                                                              ║
 ║  命令：                                                      ║
-║    /help   - 显示帮助信息                                    ║
-║    /reset  - 重置对话历史                                    ║
-║    /quit   - 退出程序                                        ║
+║    /help      - 显示帮助信息                                 ║
+║    /reset     - 重置对话历史                                 ║
+║    /verbose   - 切换详细模式（显示工具调用详情）               ║
+║    /history   - 查看对话历史摘要                             ║
+║    /save      - 保存对话记录到文件                           ║
+║    /quit      - 退出程序                                     ║
 ║                                                              ║
 ║  提示：直接输入代码相关问题即可开始对话                         ║
 ╚══════════════════════════════════════════════════════════════╝
@@ -28,20 +40,25 @@ HELP_TEXT = """
 📖 帮助信息
 ───────────────────────────────────
 命令：
-  /help   - 显示此帮助信息
-  /reset  - 重置对话历史（清除上下文）
-  /quit   - 退出程序
+  /help      - 显示此帮助信息
+  /reset     - 重置对话历史（清除上下文）
+  /verbose   - 切换详细模式（显示工具调用详情）
+  /history   - 查看对话历史摘要
+  /save      - 保存对话记录到文件
+  /quit      - 退出程序
 
 使用示例：
   "请解释 main.py 的代码逻辑"
   "这个项目有哪些文件？"
   "帮我看看 config.py 里有什么"
+  "搜索代码中所有使用 logging 的地方"
+  "为 tools.py 生成注释"
   "解释一下这段代码：print('hello')"
-  "读取 tools.py 并解释 read_file 函数"
 
 提示：
   - 直接输入你的问题，Agent 会自动读取和分析代码
   - 支持多轮对话，Agent 会记住上下文
+  - 输入 /verbose 可以查看工具调用详情
   - 输入 /reset 可以清除对话历史重新开始
 ───────────────────────────────────
 """
@@ -55,9 +72,6 @@ def check_api_key() -> bool:
         print("请按以下步骤设置：")
         print("  Windows:  set DEEPSEEK_API_KEY=your-api-key-here")
         print("  Linux/Mac: export DEEPSEEK_API_KEY=your-api-key-here")
-        print()
-        print("或者在代码中直接设置（不推荐）：")
-        print("  在 config.py 中将 API_KEY 设为你的 API Key")
         return False
     return True
 
@@ -87,14 +101,92 @@ def handle_command(command: str, agent: CodeAgent) -> bool:
         print(HELP_TEXT)
         return False
 
+    elif command == "/verbose":
+        is_verbose = verbose_manager.toggle()
+        mode = "开启" if is_verbose else "关闭"
+        print(f"✅ 详细模式已{mode}")
+        if is_verbose:
+            print("   将显示工具调用详情和 Agent 思考过程")
+        return False
+
+    elif command == "/history":
+        print(agent.get_conversation_summary())
+        # 显示 verbose 统计
+        if verbose_manager.verbose:
+            summary = verbose_manager.get_summary()
+            print(f"\n📊 工具调用统计:")
+            print(f"  - 总调用次数: {summary['total_calls']}")
+            print(f"  - 总耗时: {summary['total_time']:.2f}s")
+        return False
+
+    elif command == "/save":
+        save_conversation(agent)
+        return False
+
     else:
         print(f"❌ 未知命令: {command}")
         print("输入 /help 查看可用命令")
         return False
 
 
+def save_conversation(agent: CodeAgent) -> None:
+    """保存对话记录到文件
+
+    Args:
+        agent: CodeAgent 实例
+    """
+    try:
+        # 创建保存目录
+        save_dir = Path("conversations")
+        save_dir.mkdir(exist_ok=True)
+
+        # 生成文件名
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = save_dir / f"conversation_{timestamp}.txt"
+
+        # 写入对话记录
+        with open(filename, "w", encoding="utf-8") as f:
+            f.write("=" * 60 + "\n")
+            f.write("代码解释 Agent - 对话记录\n")
+            f.write(f"保存时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write("=" * 60 + "\n\n")
+
+            for msg in agent.messages:
+                if msg.type == "system":
+                    f.write("[系统提示词]\n")
+                    f.write("-" * 40 + "\n")
+                    f.write(msg.content + "\n")
+                    f.write("-" * 40 + "\n\n")
+                elif msg.type == "human":
+                    f.write(f"[用户] {msg.content}\n\n")
+                elif msg.type == "ai":
+                    f.write(f"[Agent] {msg.content}\n\n")
+                elif msg.type == "tool":
+                    f.write(f"[工具结果] {msg.content}\n\n")
+
+            # 写入统计信息
+            f.write("\n" + "=" * 60 + "\n")
+            f.write("对话统计\n")
+            f.write("=" * 60 + "\n")
+            f.write(agent.get_conversation_summary() + "\n")
+
+        print(f"✅ 对话记录已保存到: {filename}")
+        logger.info(f"对话记录已保存到: {filename}")
+
+    except Exception as e:
+        print(f"❌ 保存失败: {e}")
+        logger.error(f"保存对话记录失败: {e}")
+
+
 def main():
     """主函数"""
+    # 初始化日志系统
+    setup_logging(
+        log_file=config.LOG_FILE,
+        console_level=config.LOG_CONSOLE_LEVEL,
+        file_level=config.LOG_FILE_LEVEL
+    )
+
     print(BANNER)
 
     # 检查 API Key
@@ -106,8 +198,10 @@ def main():
         agent = CodeAgent()
         print("✅ Agent 初始化成功！")
         print("─" * 50)
+        logger.info("Agent 初始化成功")
     except Exception as e:
         print(f"❌ Agent 初始化失败: {e}")
+        logger.error(f"Agent 初始化失败: {e}")
         sys.exit(1)
 
     # 主循环
@@ -127,14 +221,19 @@ def main():
                 continue
 
             # 调用 Agent
-            print("\n🤔 思考中...")
+            if not verbose_manager.verbose:
+                print("\n🤔 思考中...")
+
             try:
                 response = agent.chat(user_input)
                 print(f"\n🤖 Agent:\n{response}")
+                logger.info(f"Agent 回复完成，消息数: {agent.message_count}")
             except AgentError as e:
                 print(f"\n❌ Agent 错误: {e}")
+                logger.error(f"Agent 错误: {e}")
             except Exception as e:
                 print(f"\n❌ 未知错误: {e}")
+                logger.error(f"未知错误: {e}")
 
         except KeyboardInterrupt:
             print("\n\n👋 再见！（Ctrl+C）")
