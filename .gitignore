@@ -35,6 +35,9 @@ logs/
 # Conversations
 conversations/
 
+# Preview
+.preview/
+
 # OS
 .DS_Store
 Thumbs.db

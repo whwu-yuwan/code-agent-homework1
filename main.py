@@ -10,7 +10,7 @@ from pathlib import Path
 
 import config
 from agent import CodeAgent
-from exceptions import AgentError
+from exceptions import AgentError, APIError, ContextError, ConfigError
 from callbacks import verbose_manager
 from logger import setup_logging
 
@@ -52,7 +52,6 @@ HELP_TEXT = """
   "这个项目有哪些文件？"
   "帮我看看 config.py 里有什么"
   "搜索代码中所有使用 logging 的地方"
-  "为 tools.py 生成注释"
   "解释一下这段代码：print('hello')"
 
 提示：
@@ -64,16 +63,19 @@ HELP_TEXT = """
 """
 
 
-def check_api_key() -> bool:
-    """检查 API Key 是否已设置"""
+def check_api_key() -> None:
+    """检查 API Key 是否已设置
+
+    Raises:
+        ConfigError: API Key 未设置
+    """
     if not config.API_KEY:
-        print("❌ 错误：未设置 DEEPSEEK_API_KEY 环境变量")
-        print()
-        print("请按以下步骤设置：")
-        print("  Windows:  set DEEPSEEK_API_KEY=your-api-key-here")
-        print("  Linux/Mac: export DEEPSEEK_API_KEY=your-api-key-here")
-        return False
-    return True
+        raise ConfigError(
+            "未设置 DEEPSEEK_API_KEY 环境变量\n"
+            "请按以下步骤设置：\n"
+            "  Windows:  set DEEPSEEK_API_KEY=your-api-key-here\n"
+            "  Linux/Mac: export DEEPSEEK_API_KEY=your-api-key-here"
+        )
 
 
 def handle_command(command: str, agent: CodeAgent) -> bool:
@@ -111,7 +113,6 @@ def handle_command(command: str, agent: CodeAgent) -> bool:
 
     elif command == "/history":
         print(agent.get_conversation_summary())
-        # 显示 verbose 统计
         if verbose_manager.verbose:
             summary = verbose_manager.get_summary()
             print(f"\n📊 工具调用统计:")
@@ -130,21 +131,14 @@ def handle_command(command: str, agent: CodeAgent) -> bool:
 
 
 def save_conversation(agent: CodeAgent) -> None:
-    """保存对话记录到文件
-
-    Args:
-        agent: CodeAgent 实例
-    """
+    """保存对话记录到文件"""
     try:
-        # 创建保存目录
         save_dir = Path("conversations")
         save_dir.mkdir(exist_ok=True)
 
-        # 生成文件名
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = save_dir / f"conversation_{timestamp}.txt"
 
-        # 写入对话记录
         with open(filename, "w", encoding="utf-8") as f:
             f.write("=" * 60 + "\n")
             f.write("代码解释 Agent - 对话记录\n")
@@ -164,7 +158,6 @@ def save_conversation(agent: CodeAgent) -> None:
                 elif msg.type == "tool":
                     f.write(f"[工具结果] {msg.content}\n\n")
 
-            # 写入统计信息
             f.write("\n" + "=" * 60 + "\n")
             f.write("对话统计\n")
             f.write("=" * 60 + "\n")
@@ -180,7 +173,6 @@ def save_conversation(agent: CodeAgent) -> None:
 
 def main():
     """主函数"""
-    # 初始化日志系统
     setup_logging(
         log_file=config.LOG_FILE,
         console_level=config.LOG_CONSOLE_LEVEL,
@@ -190,7 +182,10 @@ def main():
     print(BANNER)
 
     # 检查 API Key
-    if not check_api_key():
+    try:
+        check_api_key()
+    except ConfigError as e:
+        print(f"❌ 配置错误: {e}")
         sys.exit(1)
 
     # 创建 Agent
@@ -207,20 +202,16 @@ def main():
     # 主循环
     while True:
         try:
-            # 获取用户输入
             user_input = input("\n🧑 You > ").strip()
 
-            # 跳过空输入
             if not user_input:
                 continue
 
-            # 处理斜杠命令
             if user_input.startswith("/"):
                 if handle_command(user_input, agent):
                     break
                 continue
 
-            # 调用 Agent
             if not verbose_manager.verbose:
                 print("\n🤔 思考中...")
 
@@ -228,12 +219,15 @@ def main():
                 response = agent.chat(user_input)
                 print(f"\n🤖 Agent:\n{response}")
                 logger.info(f"Agent 回复完成，消息数: {agent.message_count}")
+            except ContextError as e:
+                print(f"\n⚠️ 输入错误: {e}")
+                logger.warning(f"输入错误: {e}")
+            except APIError as e:
+                print(f"\n🌐 API 错误: {e}")
+                logger.error(f"API 错误: {e}")
             except AgentError as e:
                 print(f"\n❌ Agent 错误: {e}")
                 logger.error(f"Agent 错误: {e}")
-            except Exception as e:
-                print(f"\n❌ 未知错误: {e}")
-                logger.error(f"未知错误: {e}")
 
         except KeyboardInterrupt:
             print("\n\n👋 再见！（Ctrl+C）")

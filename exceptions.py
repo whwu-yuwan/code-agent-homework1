@@ -42,11 +42,3 @@ class ConfigError(AgentError):
     当配置出现问题时抛出（如 API Key 未设置）
     """
     pass
-
-
-class InputError(AgentError):
-    """输入异常
-
-    当用户输入无效时抛出
-    """
-    pass

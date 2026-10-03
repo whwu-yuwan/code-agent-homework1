@@ -9,24 +9,26 @@
 - **代码解释**：理解代码逻辑，用清晰的中文解释
 - **目录浏览**：查看项目结构，了解文件组织
 - **代码执行**：运行 Python 代码片段，验证逻辑
-- **代码搜索**：在文件中搜索关键词或正则表达式
-- **注释生成**：为代码文件自动生成详细注释
+- **代码搜索**：递归搜索代码中的关键词或正则表达式
+- **错误分类**：工具错误、API 错误、输入错误分类处理
 
 ### 高级功能
 - **多轮对话**：支持上下文记忆，连续提问
+- **上下文裁剪**：token 超限时自动裁剪旧消息，防止上下文溢出
 - **Verbose 模式**：显示工具调用详情和 Agent 思考过程
 - **对话历史**：查看对话摘要和统计信息
 - **对话保存**：导出对话记录到文件
 - **日志系统**：完整的日志记录和错误追踪
-- **错误处理**：API 调用失败自动重试，工具执行异常优雅处理
+- **错误处理**：工具错误、API 错误、输入错误分类处理，工具轮次耗尽不崩溃
+- **安全限制**：文件操作限制在工作目录下，代码执行有超时限制
 
 ## 🛠️ 技术栈
 
 - **Python 3.10+**
-- **LangChain**：Agent 框架（Agent 执行、工具绑定、上下文管理）
-- **DeepSeek API**：大语言模型（通过 OpenAI 兼容接口）
-- **LangChain OpenAI**：连接 DeepSeek API
-- **tiktoken**：Token 使用统计
+- **LangChain**：Agent 框架（Agent 执行、工具绑定、回调系统）
+- **LangChain OpenAI**：连接 DeepSeek API（OpenAI 兼容接口）
+- **tiktoken**：上下文 token 估算和裁剪
+- **DeepSeek API**：大语言模型
 
 ## 📦 安装与运行
 
@@ -60,20 +62,12 @@ python main.py
 
 ## 📖 使用示例
 
+> 以下为示意输出，实际运行结果取决于具体代码内容和 LLM 响应。
+
 ### 示例 1：解释代码文件
 
 ```
 🧑 You > 请解释 main.py 的代码逻辑
-
-🤔 思考中...
-
-🔧 调用工具: read_file
-   参数: {'file_path': 'main.py'}
-   ✅ 完成 (0.01s)
-   结果: """
-CLI 交互界面
-提供命令行交互入口，支持多轮对话、斜杠命令、Verbose 模式
-...
 
 🤖 Agent:
 ## 概述
@@ -81,47 +75,43 @@ main.py 是程序的入口文件，实现了命令行交互界面。
 
 ## 核心逻辑
 1. `check_api_key()` - 检查 API Key 是否设置
-2. `handle_command()` - 处理斜杠命令（/help, /reset, /quit 等）
+2. `handle_command()` - 处理斜杠命令
 3. `main()` - 主循环，处理用户输入
-
-## 关键代码
-- 第 96-118 行：主循环实现
-- 第 65-93 行：命令处理逻辑
 ```
 
-### 示例 2：搜索代码
+### 示例 2：Verbose 模式下查看工具调用
+
+```
+🧑 You > /verbose
+✅ 详细模式已开启
+
+🧑 You > 解释 tools.py
+
+  🧠 思考中...
+
+  🔧 调用工具: read_file
+     参数: {'file_path': 'tools.py'}
+     ✅ 完成 (0.01s)
+     结果: """自定义工具模块...
+
+  🧠 思考中...
+
+🤖 Agent:
+## 概述
+tools.py 定义了 4 个工具...
+```
+
+### 示例 3：搜索代码
 
 ```
 🧑 You > 搜索代码中所有使用 logging 的地方
 
-🔧 调用工具: search_code
-   参数: {'keyword': 'logging', 'dir_path': '.', 'file_pattern': '*.py'}
-   ✅ 完成 (0.05s)
-   结果: 共找到 15 处匹配...
-
 🤖 Agent:
-找到了 15 处使用 logging 的地方，主要分布在：
-1. `logger.py` - 日志配置模块
-2. `agent.py` - Agent 核心模块
-3. `main.py` - CLI 界面
+共找到 N 处匹配:
+agent.py:19: logger = logging.getLogger(__name__)
+main.py:7: import logging
 ...
-```
-
-### 示例 3：生成注释
-
-```
-🧑 You > 为 tools.py 生成注释
-
-🔧 调用工具: generate_comments
-   参数: {'file_path': 'tools.py', 'style': 'inline'}
-   ✅ 完成 (0.02s)
-
-🤖 Agent:
-已为 tools.py 生成注释，包含：
-- 文件头注释
-- 函数/类定义注释
-- 关键逻辑注释
-...
+（注：N 为实际匹配数量，取决于项目中的代码）
 ```
 
 ## 🎯 命令说明
@@ -140,23 +130,20 @@ main.py 是程序的入口文件，实现了命令行交互界面。
 ```
 code-agent-homework1/
 ├── main.py              # 入口，CLI 交互界面
-├── agent.py             # Agent 初始化与循环（核心）
-├── tools.py             # 自定义工具（5个工具）
+├── agent.py             # Agent 核心（循环、上下文裁剪、异常处理）
+├── tools.py             # 4 个工具（读文件、列目录、执行代码、搜索）
 ├── prompts.py           # 系统提示词
 ├── config.py            # 配置常量
-├── callbacks.py         # LangChain 回调处理器
+├── callbacks.py         # LangChain 回调处理器（Verbose 模式）
 ├── logger.py            # 日志配置模块
-├── exceptions.py        # 自定义异常类
+├── exceptions.py        # 自定义异常类层次结构
 ├── requirements.txt     # 依赖
 ├── README.md            # 项目文档
 ├── Design.md            # 设计文档
-├── .gitignore
-├── logs/                # 日志目录
-│   └── agent.log        # 日志文件
-├── conversations/       # 对话记录目录
 └── tests/               # 测试
-    ├── test_tools.py    # 工具测试
-    └── test_agent.py    # Agent 测试
+    ├── conftest.py      # 测试配置
+    ├── test_tools.py    # 工具测试（14 个）
+    └── test_agent.py    # Agent 测试（9 个）
 ```
 
 ## 🧪 运行测试
@@ -177,22 +164,29 @@ pytest tests/test_agent.py -v
 ```python
 # DeepSeek API 配置
 API_BASE_URL = "https://api.deepseek.com"
-API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
 MODEL_NAME = "deepseek-chat"
+TEMPERATURE = 0.3               # LLM 温度
+MAX_TOKENS = 4096               # 最大输出 token
 
 # 上下文管理
-MAX_CONTEXT_TOKENS = 64000
-TRIM_THRESHOLD_TOKENS = 50000
+MAX_CONTEXT_TOKENS = 64000      # 最大上下文 token
+MAX_OUTPUT_TOKENS = 4096        # LLM 最大输出 token
+TOOL_RESULT_RESERVE_TOKENS = 8000  # 工具结果预留 token 预算
+TRIM_THRESHOLD_TOKENS = 51904   # 裁剪阈值（自动计算）
+
+# 输入校验
+MAX_INPUT_TOKEN_RATIO = 0.5     # 输入 token 占最大上下文的比例上限
+
+# 消息保护
+MIN_MESSAGES_TO_KEEP = 2        # 裁剪时最少保留的消息数
 
 # 工具配置
-MAX_TOOL_CALLS_PER_TURN = 10
-MAX_FILE_READ_BYTES = 1_000_000  # 1MB
-CODE_EXECUTION_TIMEOUT = 10  # 秒
-
-# 日志配置
-LOG_FILE = "logs/agent.log"
-LOG_CONSOLE_LEVEL = 20  # INFO
-LOG_FILE_LEVEL = 10  # DEBUG
+MAX_TOOL_CALLS_PER_TURN = 10    # 每轮最大工具调用次数
+MAX_FILE_READ_BYTES = 200_000   # 文件读取大小限制 (200KB)
+MAX_TOOL_RESULT_TOKENS = 4000   # 单个工具结果 token 上限
+MAX_SEARCH_RESULTS = 50         # 搜索最大结果数
+CODE_EXECUTION_TIMEOUT = 10     # 代码执行超时 (秒)
+ALLOWED_PATH_PREFIX = None      # 文件操作限制目录（None=延迟求值到 os.getcwd()）
 ```
 
 ## 📝 设计文档
@@ -209,13 +203,9 @@ A: 访问 [DeepSeek 官网](https://platform.deepseek.com/) 注册账号并获�
 
 A: 请确保已开启 Verbose 模式，输入 `/verbose` 命令切换。
 
-### Q: 如何查看日志？
+### Q: 对话太长怎么办？
 
-A: 日志文件位于 `logs/agent.log`，包含详细的执行记录。
-
-### Q: 对话记录保存在哪里？
-
-A: 对话记录保存在 `conversations/` 目录下，文件名格式为 `conversation_YYYYMMDD_HHMMSS.txt`。
+A: Agent 会自动裁剪旧消息以保持在 token 限制内，也可以手动 `/reset` 重置。
 
 ## 📄 License
 

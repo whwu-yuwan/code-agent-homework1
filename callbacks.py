@@ -5,7 +5,7 @@ LangChain 回调模块
 
 import time
 import logging
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 from uuid import UUID
 
 from langchain_core.callbacks import BaseCallbackHandler
@@ -34,6 +34,7 @@ class ToolCallbackHandler(BaseCallbackHandler):
         self.verbose = verbose
         self.tool_calls_log: List[Dict[str, Any]] = []
         self._tool_start_times: Dict[str, float] = {}
+        self._tool_names: Dict[str, str] = {}  # run_id -> tool_name 映射
 
     def on_tool_start(
         self,
@@ -49,7 +50,11 @@ class ToolCallbackHandler(BaseCallbackHandler):
     ) -> None:
         """工具开始执行时调用"""
         tool_name = serialized.get("name", "unknown")
-        self._tool_start_times[str(run_id)] = time.time()
+        run_id_str = str(run_id)
+
+        # 存储 run_id -> tool_name 映射
+        self._tool_names[run_id_str] = tool_name
+        self._tool_start_times[run_id_str] = time.time()
 
         if self.verbose:
             print(f"\n  🔧 调用工具: {tool_name}")
@@ -71,25 +76,30 @@ class ToolCallbackHandler(BaseCallbackHandler):
         **kwargs: Any,
     ) -> None:
         """工具执行完成时调用"""
-        tool_name = "unknown"
+        run_id_str = str(run_id)
+
+        # 从映射中获取真实工具名
+        tool_name = self._tool_names.pop(run_id_str, "unknown")
         elapsed = 0.0
 
         # 计算执行时间
-        run_id_str = str(run_id)
         if run_id_str in self._tool_start_times:
             elapsed = time.time() - self._tool_start_times.pop(run_id_str)
 
+        # 确保 output 为字符串（工具可能返回非 str 类型）
+        output_str = str(output) if not isinstance(output, str) else output
+
         if self.verbose:
             # 显示结果摘要
-            result_preview = output[:200] + "..." if len(output) > 200 else output
+            result_preview = output_str[:200] + "..." if len(output_str) > 200 else output_str
             print(f"     ✅ 完成 ({elapsed:.2f}s)")
-            if output and output != "(无输出)":
+            if output_str and output_str != "(无输出)":
                 print(f"     结果: {result_preview}")
 
         # 记录日志
         self.tool_calls_log.append({
             "tool": tool_name,
-            "output_preview": output[:100] if output else "",
+            "output_preview": output_str[:100] if output_str else "",
             "elapsed": elapsed,
         })
 
@@ -104,10 +114,13 @@ class ToolCallbackHandler(BaseCallbackHandler):
         **kwargs: Any,
     ) -> None:
         """工具执行出错时调用"""
+        run_id_str = str(run_id)
+        tool_name = self._tool_names.pop(run_id_str, "unknown")
+
         if self.verbose:
             print(f"     ❌ 错误: {error}")
 
-        logger.error(f"Tool error: {error}")
+        logger.error(f"Tool error ({tool_name}): {error}")
 
     def on_llm_start(
         self,
@@ -149,6 +162,7 @@ class ToolCallbackHandler(BaseCallbackHandler):
         """重置日志"""
         self.tool_calls_log.clear()
         self._tool_start_times.clear()
+        self._tool_names.clear()
 
 
 class VerboseManager:
