@@ -88,8 +88,9 @@
 
 1. **最大工具调用次数**：10 次，耗尽后不崩溃，强制生成回复
 2. **上下文裁剪**：使用 tiktoken 估算 token，超过 51904 时裁剪（为输出和工具结果预留空间），保持 tool_call/tool_result 配对
-3. **异常分层**：ToolError、APIError 分别在工具执行和 LLM 调用时抛出
-4. **回调系统**：工具执行时传入 callbacks，确保 LangChain 触发回调事件
+3. **异常分层**：ToolError、APIError、ContextError 分别在工具执行、LLM 调用、输入校验时抛出；AgentError 子类直接传播，不二次包装
+4. **API 失败回滚**：失败时回滚消息历史到本轮开始前（`pre_input_len`），同时回滚 token 统计（`pre_tokens`），确保状态一致性
+5. **回调系统**：工具执行时传入 callbacks，确保 LangChain 触发回调事件
 
 ## 3. 工具设计
 
@@ -97,10 +98,10 @@
 
 | 工具 | 功能 | 参数 | 说明 |
 |------|------|------|------|
-| `read_file` | 读取本地代码文件 | `file_path: str` | 支持 UTF-8/Latin-1，大小限制 200KB |
+| `read_file` | 读取本地代码文件 | `file_path: str` | 支持 UTF-8/GBK/Latin-1，大小限制 200KB |
 | `list_directory` | 列出目录内容 | `dir_path: str` | 按目录/文件排序 |
 | `execute_python` | 执行 Python 代码 | `code: str` | subprocess 隔离，10 秒超时 |
-| `search_code` | 搜索代码关键词 | `keyword, dir_path, pattern` | 默认递归 `**/*.py`，最多 50 条结果 |
+| `search_code` | 搜索代码关键词 | `keyword, dir_path, file_pattern` | 默认递归 `**/*.py`，最多 50 条结果 |
 
 ### 3.2 安全限制
 
@@ -147,7 +148,9 @@ AgentError (Agent 基础异常)
 | 输入过长 | raise ContextError | `ContextError` |
 | 工具执行失败 | 工具内部 raise ToolError，Agent 捕获并转为 ToolMessage | `ToolError` |
 | 未知工具 | Agent raise ToolError，转为 ToolMessage | `ToolError` |
-| 工具轮次耗尽 | 调用不带 tools 的 LLM 强制回复 | - |
+| 工具轮次耗尽 | 调用不带 tools 的 LLM 强制回复，失败则返回兜底消息 | - |
+| API 失败 | 回滚消息历史到本轮开始前，回滚 token 统计，raise APIError | `APIError` |
+| LLM 空回复 | 构造 fallback 消息（"Agent 未生成有效回复"）入历史并返回 | - |
 | 用户中断 (Ctrl+C) | 优雅退出 | - |
 
 ### 5.3 重试机制
@@ -188,6 +191,7 @@ ToolCallbackHandler
 
 - 工具执行时传入 `config={"callbacks": callbacks}`，确保 LangChain 触发回调
 - `on_tool_start` 存储 `run_id → tool_name` 映射，`on_tool_end` 从中获取真实名称
+- `verbose_manager` 采用模块级全局单例设计：单用户 CLI 场景下足够，`reset()` 只清理 handler 状态不替换实例。如需多 Agent 实例并存，可改为 Agent 持有独立 VerboseManager
 
 ## 8. 日志系统
 

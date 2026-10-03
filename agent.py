@@ -14,7 +14,7 @@ import config
 from tools import TOOLS
 from prompts import SYSTEM_PROMPT
 from callbacks import verbose_manager
-from exceptions import ToolError, APIError, ContextError
+from exceptions import AgentError, ToolError, APIError, ContextError
 
 logger = logging.getLogger(__name__)
 
@@ -211,8 +211,8 @@ class CodeAgent:
         # 按比例计算保留字符数，留 10% 余量给截断提示
         keep_ratio = config.MAX_TOOL_RESULT_TOKENS / tokens
         keep_chars = int(len(result) * keep_ratio * 0.9)
-        # 头部 70%，尾部 30%
-        head_chars = int(keep_chars * 0.7)
+        # 头部 config.TRUNCATE_HEAD_RATIO，尾部 1 - ratio
+        head_chars = int(keep_chars * config.TRUNCATE_HEAD_RATIO)
         tail_chars = keep_chars - head_chars
 
         truncation_notice = f"\n\n... [结果过长，已截断（原始约 {tokens} tokens，保留约 {config.MAX_TOOL_RESULT_TOKENS} tokens）] ...\n\n"
@@ -253,6 +253,9 @@ class CodeAgent:
                 ToolMessage(content=result_str, tool_call_id=tool_id)
             )
 
+        # 每轮工具执行后检查是否需要裁剪上下文（防止单轮累积过多工具结果）
+        self._trim_context()
+
     def chat(self, user_input: str) -> str:
         """处理用户输入，执行 Agent 循环。
 
@@ -274,6 +277,8 @@ class CodeAgent:
 
         # 记录添加用户消息前的快照（API 失败时回滚到此处，清理 HumanMessage）
         pre_input_len = len(self.messages)
+        # 记录 token 统计快照（失败时回滚，避免统计偏大）
+        pre_tokens = self.total_tokens_used
 
         # 添加用户消息到历史
         self.messages.append(HumanMessage(content=user_input))
@@ -320,16 +325,22 @@ class CodeAgent:
                     continue
                 else:
                     # 没有工具调用，返回文本回复
-                    self.messages.append(response)
                     logger.info(f"Agent 回复完成 (迭代 {iteration + 1})")
-                    # 检查空回复
+                    # 检查空回复：为空时构造 fallback 入历史（与 _force_final_response 一致）
                     if not response.content or not response.content.strip():
-                        return "（Agent 未生成有效回复，请重试）"
+                        fallback = "（Agent 未生成有效回复，请重试）"
+                        self.messages.append(AIMessage(content=fallback))
+                        return fallback
+                    self.messages.append(response)
                     return response.content
 
+            except AgentError:
+                # 已分类的异常（ToolError/APIError/ContextError）直接传播，不二次包装
+                raise
             except Exception as e:
-                # 执行失败：回滚到添加用户消息之前，清理残留的 HumanMessage
+                # 未预期的异常：回滚消息历史和 token 统计
                 del self.messages[pre_input_len:]
+                self.total_tokens_used = pre_tokens
                 logger.error(f"Agent 执行出错 (迭代 {iteration + 1}): {e}")
                 raise APIError(f"Agent 执行失败: {e}")
 
@@ -344,7 +355,7 @@ class CodeAgent:
             self.messages.append(AIMessage(content=fallback))
             return fallback
 
-    def reset(self):
+    def reset(self) -> None:
         """重置对话历史"""
         self.messages = [SystemMessage(content=SYSTEM_PROMPT)]
         self.total_tokens_used = 0

@@ -11,6 +11,8 @@ from uuid import UUID
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.outputs import LLMResult
 
+import config
+
 # 创建日志记录器
 logger = logging.getLogger(__name__)
 
@@ -61,8 +63,8 @@ class ToolCallbackHandler(BaseCallbackHandler):
             if inputs:
                 # 显示参数（截断过长的参数）
                 args_str = str(inputs)
-                if len(args_str) > 200:
-                    args_str = args_str[:200] + "..."
+                if len(args_str) > config.ARGS_PREVIEW_LENGTH:
+                    args_str = args_str[:config.ARGS_PREVIEW_LENGTH] + "..."
                 print(f"     参数: {args_str}")
 
         logger.info(f"Tool started: {tool_name}")
@@ -91,7 +93,7 @@ class ToolCallbackHandler(BaseCallbackHandler):
 
         if self.verbose:
             # 显示结果摘要
-            result_preview = output_str[:200] + "..." if len(output_str) > 200 else output_str
+            result_preview = output_str[:config.ARGS_PREVIEW_LENGTH] + "..." if len(output_str) > config.ARGS_PREVIEW_LENGTH else output_str
             print(f"     ✅ 完成 ({elapsed:.2f}s)")
             if output_str and output_str != "(无输出)":
                 print(f"     结果: {result_preview}")

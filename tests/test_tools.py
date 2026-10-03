@@ -121,3 +121,40 @@ class TestSearchCode:
         })
         assert "匹配" in result
         assert "hello" in result
+
+    def test_search_regex_fallback(self, tmp_dir_with_files, disable_path_restriction):
+        """测试非法正则回退为字面量搜索"""
+        # "[invalid" 是非法正则，应回退为字面量搜索
+        result = search_code.invoke({
+            "keyword": "[invalid",
+            "dir_path": tmp_dir_with_files,
+            "file_pattern": "**/*.py"
+        })
+        # 不应抛异常，应正常返回（无匹配或有匹配）
+        assert isinstance(result, str)
+
+
+class TestExecutePythonTimeout:
+    """execute_python 超时测试"""
+
+    def test_execute_python_timeout(self):
+        """测试代码执行超时抛出 ToolError"""
+        import config
+        # 使用极短超时（通过 monkeypatch 不适用，直接用超时代码）
+        # 用 sleep 超过 CODE_EXECUTION_TIMEOUT
+        code = f"import time; time.sleep({config.CODE_EXECUTION_TIMEOUT + 5})"
+        with pytest.raises(ToolError, match="超时"):
+            execute_python.invoke({"code": code})
+
+
+class TestReadFileLarge:
+    """read_file 大文件测试"""
+
+    def test_read_file_too_large(self, tmp_path, disable_path_restriction):
+        """测试读取超大文件抛出 ToolError"""
+        import config
+        # 创建一个超过 MAX_FILE_READ_BYTES 的文件
+        large_file = tmp_path / "large.py"
+        large_file.write_bytes(b"x" * (config.MAX_FILE_READ_BYTES + 1))
+        with pytest.raises(ToolError, match="文件过大"):
+            read_file.invoke({"file_path": str(large_file)})

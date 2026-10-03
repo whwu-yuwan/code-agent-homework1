@@ -28,6 +28,10 @@ MAX_TOOL_RESULT_TOKENS = 4000     # 单个工具结果的 token 上限，超出�
 MAX_SEARCH_RESULTS = 50           # search_code 最大结果数
 CODE_EXECUTION_TIMEOUT = 10       # 秒
 
+# 截断策略
+TRUNCATE_HEAD_RATIO = 0.7         # 截断时头部保留比例（尾部 1 - ratio）
+ARGS_PREVIEW_LENGTH = 200         # callbacks 中参数预览最大字符数
+
 # 输入校验
 MAX_INPUT_TOKEN_RATIO = 0.5       # 输入 token 占最大上下文的比例上限
 
@@ -41,5 +45,5 @@ ALLOWED_PATH_PREFIX = None
 
 # 日志配置
 LOG_FILE = "logs/agent.log"
-LOG_CONSOLE_LEVEL = 20  # INFO
+LOG_CONSOLE_LEVEL = 30  # WARNING（避免 INFO 日志污染 CLI 界面）
 LOG_FILE_LEVEL = 10  # DEBUG

@@ -72,7 +72,10 @@ def read_file(file_path: str) -> str:
         try:
             content = path.read_text(encoding="utf-8")
         except UnicodeDecodeError:
-            content = path.read_text(encoding="latin-1")
+            try:
+                content = path.read_text(encoding="gbk")
+            except (UnicodeDecodeError, LookupError):
+                content = path.read_text(encoding="latin-1")
     except PermissionError:
         raise ToolError(f"没有权限读取文件: {file_path}")
     except OSError as e:
@@ -217,8 +220,8 @@ def search_code(keyword: str, dir_path: str = ".", file_pattern: str = "**/*.py"
                     results.append(f"{rel_path}:{line_num}: {line.strip()}")
 
                     if match_count >= config.MAX_SEARCH_RESULTS:
-                        results.append(f"\n... 共找到 {match_count}+ 处匹配（已截断）")
-                        return "\n".join(results)
+                        header = f"共找到 {match_count}+ 处匹配（已截断）:\n"
+                        return header + "\n".join(results)
     except Exception as e:
         raise ToolError(f"搜索失败: {e}")
 

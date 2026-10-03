@@ -257,3 +257,68 @@ class TestCodeAgent:
         # API 失败后，HumanMessage 应被清理，回到初始状态
         assert agent.message_count == initial_count
         assert not any(isinstance(m, HumanMessage) for m in agent.messages)
+
+    @patch("agent.ChatOpenAI")
+    def test_truncate_tool_result(self, mock_openai):
+        """测试工具结果截断保留头部和尾部"""
+        mock_llm = MagicMock()
+        mock_openai.return_value = mock_llm
+        mock_llm.bind_tools.return_value = mock_llm
+
+        agent = CodeAgent()
+
+        # 构造超长结果（超过 MAX_TOOL_RESULT_TOKENS = 4000 tokens）
+        # 用多样化中文文本避免 tiktoken 高效压缩
+        line = "这是一行代码内容，包含变量名和函数定义等信息。\n"
+        head_content = "HEAD_START\n" + line * 3000  # 头部标记
+        tail_content = line * 3000 + "TAIL_END\n"    # 尾部标记
+        long_result = head_content + tail_content
+
+        truncated = agent._truncate_tool_result(long_result)
+
+        # 应该被截断
+        assert len(truncated) < len(long_result)
+        # 头部内容应保留
+        assert "HEAD_START" in truncated
+        # 尾部内容应保留
+        assert "TAIL_END" in truncated
+        # 截断提示应存在
+        assert "截断" in truncated
+
+    @patch("agent.ChatOpenAI")
+    def test_empty_response_returns_placeholder(self, mock_openai):
+        """测试 LLM 空回复时返回占位提示，且入历史的是 fallback 内容"""
+        mock_llm = MagicMock()
+        mock_openai.return_value = mock_llm
+        mock_llm.bind_tools.return_value = mock_llm
+
+        # 返回空内容
+        mock_llm.invoke.return_value = AIMessage(content="")
+
+        agent = CodeAgent()
+        result = agent.chat("你好")
+
+        assert "未生成有效回复" in result
+        # 历史中最后一条应是 fallback 内容（不是空字符串）
+        last_ai = agent.messages[-1]
+        assert isinstance(last_ai, AIMessage)
+        assert "未生成有效回复" in last_ai.content
+
+    @patch("agent.ChatOpenAI")
+    def test_api_failure_rollback_token_stats(self, mock_openai):
+        """测试 API 失败时 token 统计被回滚"""
+        mock_llm = MagicMock()
+        mock_openai.return_value = mock_llm
+        mock_llm.bind_tools.return_value = mock_llm
+
+        agent = CodeAgent()
+        agent.total_tokens_used = 500  # 模拟已有的 token 使用
+
+        # 模拟 API 失败
+        mock_llm.invoke.side_effect = Exception("API 超时")
+
+        with pytest.raises(APIError):
+            agent.chat("这个问题会失败")
+
+        # token 统计应回滚到失败前
+        assert agent.total_tokens_used == 500
